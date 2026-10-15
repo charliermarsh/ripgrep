@@ -1456,9 +1456,7 @@ impl WalkParallel {
             let mut visitor = builder.build();
             let mut paths = Vec::new().into_iter();
             std::mem::swap(&mut paths, &mut self.paths);
-            // Send the initial set of root paths to the pool of workers. Note
-            // that we only send directories. For files, we send to them the
-            // callback directly.
+            // Send the initial set of root paths to the pool of workers.
             for path in paths {
                 let (dent, root_device) = if path == Path::new("-") {
                     (DirEntry::new_stdin(), None)
@@ -1489,11 +1487,8 @@ impl WalkParallel {
                         }
                     }
                 };
-                stack.push(Message::Work(Work {
-                    dent,
-                    ignore: self.ig_root.clone(),
-                    root_device,
-                }));
+                let ignore = dent.is_dir().then(|| self.ig_root.clone());
+                stack.push(Message::Work(Work { dent, ignore, root_device }));
             }
             // ... but there's no need to start workers if we don't need them.
             if stack.is_empty() {
@@ -1558,13 +1553,14 @@ enum Message {
 
 /// A unit of work for each worker to process.
 ///
-/// Each unit of work corresponds to a directory that should be descended
-/// into.
+/// Each unit of work corresponds to an entry to visit. Directories also
+/// produce work for their children.
 struct Work {
     /// The directory entry.
     dent: DirEntry,
-    /// Any ignore matchers that have been built for this directory's parents.
-    ignore: Ignore,
+    /// Ignore matchers inherited by a directory. Files need no further ignore
+    /// matching after they are queued.
+    ignore: Option<Ignore>,
     /// The root device number. When present, only files with the same device
     /// number should be considered.
     root_device: Option<u64>,
@@ -1597,15 +1593,15 @@ impl Work {
         }
         // At depth 0, the path of this entry is a root path, so we can
         // use it directly to add parent ignore rules.
-        let (ig, err) = self.ignore.add_parents(self.dent.path());
-        self.ignore = ig;
+        let (ig, err) = self.ignore().add_parents(self.dent.path());
+        self.ignore = Some(ig);
         err
     }
 
     /// Adds ignore rules for this directory without reading its contents.
     fn add_ignore(&mut self) {
-        let (ig, err) = self.ignore.add_child(self.dent.path());
-        self.ignore = ig;
+        let (ig, err) = self.ignore().add_child(self.dent.path());
+        self.ignore = Some(ig);
         self.dent.err = err;
     }
 
@@ -1639,11 +1635,16 @@ impl Work {
             }
         }
         let (ig, err) = self
-            .ignore
+            .ignore()
             .add_child_with_entries(self.dent.path(), &result.entries);
-        self.ignore = ig;
+        self.ignore = Some(ig);
         self.dent.err = err;
         Ok(result)
+    }
+
+    /// Return the ignore state required when processing a directory.
+    fn ignore(&self) -> &Ignore {
+        self.ignore.as_ref().expect("directories have ignore state")
     }
 }
 
@@ -1875,9 +1876,10 @@ impl<'s> Worker<'s> {
             }
         };
 
+        let ignore = work.ignore.expect("directories have ignore state");
         for result in readdir.entries {
             let state = self.generate_work(
-                &work.ignore,
+                &ignore,
                 depth + 1,
                 work.root_device,
                 result,
@@ -1967,7 +1969,8 @@ impl<'s> Worker<'s> {
                 false
             };
         if !should_skip_filesize && !should_skip_filtered {
-            self.send(Work { dent, ignore: ig.clone(), root_device });
+            let ignore = dent.is_dir().then(|| ig.clone());
+            self.send(Work { dent, ignore, root_device });
         }
         WalkState::Continue
     }
