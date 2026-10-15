@@ -330,11 +330,11 @@ impl IncrementalIgnore {
         //
         // Only try the fast path when the final component is a normal path
         // component. Invalid paths are handled by the component walk below.
-        let has_normal_final_component =
-            relative.components().next_back().is_some_and(|component| {
-                matches!(component, std::path::Component::Normal(_))
-            });
-        if has_normal_final_component && let Some(parent) = relative.parent() {
+        let mut parent_components = relative.components();
+        if let Some(std::path::Component::Normal(_)) =
+            parent_components.next_back()
+        {
+            let parent = parent_components.as_path();
             match self.dirs.get(parent) {
                 Some(CachedDir::Allowed(ignore)) => {
                     return Some(self.match_path(ignore, relative, is_dir));
