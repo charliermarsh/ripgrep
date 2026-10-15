@@ -377,7 +377,7 @@ impl GitignoreBuilder {
             globs: self.globs.clone(),
             num_ignores: nignore as u64,
             num_whitelists: nwhite as u64,
-            matches: if self.globs.is_empty() {
+            matches: if self.globs.len() <= 1 {
                 None
             } else {
                 Some(Arc::new(Pool::with_available_parallelism_capacity(
