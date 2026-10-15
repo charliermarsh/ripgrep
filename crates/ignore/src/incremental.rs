@@ -63,6 +63,9 @@ pub struct IncrementalIgnore {
     ignore: RootIgnore,
     /// Directory paths relative to `root`, excluding the root itself.
     dirs: HashMap<PathBuf, CachedDir>,
+    /// A reusable buffer for matching paths under the root.
+    /// Keep it out of line to limit growth of the frequently accessed state.
+    full_path: Box<PathBuf>,
     /// Options for additional filtering beyond gitignore.
     options: IncrementalIgnoreOptions,
 }
@@ -126,6 +129,7 @@ impl IncrementalIgnore {
             normalized_root: OnceLock::new(),
             ignore,
             dirs: HashMap::new(),
+            full_path: Box::default(),
             options,
         }
     }
@@ -337,7 +341,14 @@ impl IncrementalIgnore {
             let parent = parent_components.as_path();
             match self.dirs.get(parent) {
                 Some(CachedDir::Allowed(ignore)) => {
-                    return Some(self.match_path(ignore, relative, is_dir));
+                    self.full_path.clear();
+                    self.full_path.push(&self.root);
+                    self.full_path.push(relative);
+                    return Some(self.match_path(
+                        ignore,
+                        &self.full_path,
+                        is_dir,
+                    ));
                 }
                 Some(CachedDir::Ignored) => {
                     return Some(IncrementalMatch::ignore());
@@ -387,28 +398,26 @@ impl IncrementalIgnore {
             ignore = child;
         }
 
-        Some(self.match_path(&ignore, relative, is_dir))
+        self.full_path.clear();
+        self.full_path.push(&self.root);
+        self.full_path.push(relative);
+        Some(self.match_path(&ignore, &self.full_path, is_dir))
     }
 
     fn match_path(
         &self,
         ignore: &Ignore,
-        relative: &Path,
+        path: &Path,
         is_dir: bool,
     ) -> IncrementalMatch {
-        let capacity =
-            self.root.as_os_str().len() + relative.as_os_str().len() + 1;
-        let mut path = PathBuf::with_capacity(capacity);
-        path.push(&self.root);
-        path.push(relative);
         let mut mat = IncrementalMatch::from_match(
-            ignore.matched(&path, is_dir).map(|_| ()),
+            ignore.matched(path, is_dir).map(|_| ()),
             is_dir,
         );
         // Whether a file is hidden or not has low precedence in filtering. We
         // only check it if we haven't matched anything above. This permits
         // callers to whitelist hidden files or directories.
-        if self.options.hidden && mat.is_none() && is_hidden_path(&path) {
+        if self.options.hidden && mat.is_none() && is_hidden_path(path) {
             mat = IncrementalMatch::ignore();
         }
         mat
