@@ -859,7 +859,7 @@ mod tests {
         let mut m = one_matcher(&builder(td.path()));
         assert!(matchedf(&mut m, "a/b/allowed").is_none());
         assert!(matches!(
-            m.dirs.get(Path::new("a/b").as_os_str()),
+            m.dirs.get(Path::new("a").join("b").as_os_str()),
             Some(CachedDir::Allowed(_))
         ));
         assert!(matchedf(&mut m, "a/b/ignored").is_ignore());
@@ -896,7 +896,7 @@ mod tests {
         let mut m = one_matcher(&builder(td.path()));
         assert!(matchedf(&mut m, "a/b/file").is_ignore());
         assert!(matches!(
-            m.dirs.get(Path::new("a/b").as_os_str()),
+            m.dirs.get(Path::new("a").join("b").as_os_str()),
             Some(CachedDir::Allowed(_))
         ));
         let dir = matchedd(&mut m, "a/b");
