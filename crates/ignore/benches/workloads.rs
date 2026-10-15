@@ -407,3 +407,46 @@ fn walk_with_overrides_and_types(b: &mut test::Bencher) {
     assert_eq!(walk(&builder, 12), ws.python_files);
     b.iter(|| assert_eq!(walk(black_box(&builder), 12), ws.python_files));
 }
+
+#[bench]
+fn match_single_file_glob(b: &mut test::Bencher) {
+    let mut builder = GitignoreBuilder::new("");
+    builder.add_line(None, "*.pyc").unwrap();
+    let matcher = builder.build().unwrap();
+    let paths = [
+        ("module.py", false),
+        ("module.pyc", true),
+        ("src/module.py", false),
+        ("src/__pycache__/module.pyc", true),
+    ];
+    b.iter(|| {
+        for (path, ignored) in paths {
+            assert_eq!(
+                matcher.matched(black_box(path), false).is_ignore(),
+                ignored
+            );
+        }
+    });
+}
+
+#[bench]
+fn match_single_directory_whitelist(b: &mut test::Bencher) {
+    let mut builder = GitignoreBuilder::new("");
+    builder.add_line(None, "!/.github/").unwrap();
+    let matcher = builder.build().unwrap();
+    let paths = [
+        (".github", true, true),
+        (".github", false, false),
+        (".github/workflows/check.yml", false, false),
+        ("src/module.py", false, false),
+        ("src", true, false),
+    ];
+    b.iter(|| {
+        for (path, is_dir, whitelisted) in paths {
+            assert_eq!(
+                matcher.matched(black_box(path), is_dir).is_whitelist(),
+                whitelisted
+            );
+        }
+    });
+}

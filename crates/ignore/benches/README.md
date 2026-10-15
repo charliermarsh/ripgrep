@@ -40,6 +40,8 @@ covering parent-matcher reuse when Ruff receives multiple directory arguments.
 file-type matchers as a control for their more common empty configuration.
 The `build_*` and `match_*` microbenchmarks help distinguish compilation and
 matching costs from filesystem traversal.
+The single-pattern cases cover bytecode exclusions and the directory whitelist
+used in Ruff's and uv's root `.ignore` files.
 
 Like the `globset` benchmarks, these use Rust's nightly `test` harness:
 
