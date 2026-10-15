@@ -450,3 +450,21 @@ fn match_single_directory_whitelist(b: &mut test::Bencher) {
         }
     });
 }
+
+#[bench]
+fn match_single_path_whitelist(b: &mut test::Bencher) {
+    let mut builder = GitignoreBuilder::new("");
+    builder.add_line(None, "!/vendor/typeshed/**/*").unwrap();
+    let matcher = builder.build().unwrap();
+    let paths = [
+        ("vendor/typeshed/stdlib/builtins.pyi", true),
+        ("vendor/typeshed/stubs/pkg/__init__.pyi", true),
+        ("src/lib.rs", false),
+        ("vendor/other/module.py", false),
+    ];
+    b.iter(|| {
+        for (path, whitelisted) in paths {
+            assert_eq!(matcher.matched(black_box(path), false).is_whitelist(), whitelisted);
+        }
+    });
+}
