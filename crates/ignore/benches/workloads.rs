@@ -464,7 +464,10 @@ fn match_single_path_whitelist(b: &mut test::Bencher) {
     ];
     b.iter(|| {
         for (path, whitelisted) in paths {
-            assert_eq!(matcher.matched(black_box(path), false).is_whitelist(), whitelisted);
+            assert_eq!(
+                matcher.matched(black_box(path), false).is_whitelist(),
+                whitelisted
+            );
         }
     });
 }
@@ -495,4 +498,15 @@ fn incremental_gitignore_only(b: &mut test::Bencher) {
             assert!(!matchers[0].matched(black_box(path), false).is_ignore());
         }
     });
+}
+
+#[bench]
+fn walk_selected_python_files(b: &mut test::Bencher) {
+    let ws = Workspace::new(128, 1, 32, false);
+    let mut overrides = OverrideBuilder::new(&ws.root);
+    overrides.add("*.py").unwrap().add("*.pyi").unwrap();
+    let mut builder = ws.builder();
+    builder.overrides(overrides.build().unwrap());
+    assert_eq!(walk(&builder, 12), ws.python_files);
+    b.iter(|| assert_eq!(walk(black_box(&builder), 12), ws.python_files));
 }
