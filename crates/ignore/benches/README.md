@@ -58,3 +58,18 @@ For comparisons, use the same compiler, profile, fixture parameters, and CPU
 affinity for both revisions. Alternate baseline and candidate runs, and retain
 the per-run results instead of relying on a single measurement. Parallel walks
 also include worker startup and shutdown, which can dominate small projects.
+
+Ruff, uv, and ty enable fat LTO in release builds, while their profiling builds
+omit cross-crate LTO. Check promising changes in both configurations, especially
+when small matching benchmarks give inconsistent results:
+
+```console
+CARGO_PROFILE_BENCH_LTO=fat CARGO_PROFILE_BENCH_CODEGEN_UNITS=16 cargo +nightly bench -p ignore --bench workloads
+```
+
+For focused comparisons, pass one benchmark name with `--exact` so that each
+case runs in a separate process:
+
+```console
+cargo +nightly bench -p ignore --bench workloads -- --exact incremental_ignored_parent
+```
