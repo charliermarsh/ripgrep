@@ -42,6 +42,8 @@ The `build_*` and `match_*` microbenchmarks help distinguish compilation and
 matching costs from filesystem traversal.
 The single-pattern cases cover bytecode exclusions, the directory whitelist
 used in Ruff's and uv's root `.ignore` files, and ty's vendored-typeshed whitelist.
+`build_single_directory_whitelist` builds that single-rule matcher from an
+already populated builder.
 The `*gitignore_only*` controls remove `.ignore` and `.git/info/exclude`, covering
 projects that rely solely on a `.gitignore` with multiple patterns.
 `walk_selected_python_files` uses two positive override patterns, exercising

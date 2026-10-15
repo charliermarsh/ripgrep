@@ -285,6 +285,13 @@ fn build_empty_gitignore(b: &mut test::Bencher) {
 }
 
 #[bench]
+fn build_single_directory_whitelist(b: &mut test::Bencher) {
+    let mut builder = GitignoreBuilder::new("workspace");
+    builder.add_line(None, "!/.github/").unwrap();
+    b.iter(|| black_box(builder.build().unwrap()));
+}
+
+#[bench]
 fn build_python_gitignore(b: &mut test::Bencher) {
     let mut builder = GitignoreBuilder::new("workspace");
     for line in RULES.lines() {
