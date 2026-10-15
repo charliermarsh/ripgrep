@@ -341,6 +341,20 @@ fn incremental_warm_deep(b: &mut test::Bencher) {
 }
 
 #[bench]
+fn incremental_ignored_nested(b: &mut test::Bencher) {
+    let ws = Workspace::new(1, 1, 1, false);
+    let path = Path::new(
+        "packages/pkg0/level0/.venv/lib/python3.13/site-packages/dependency.py",
+    );
+    ws.write(path.to_str().unwrap(), "");
+    let mut matchers = ws.builder().build_matchers();
+    assert!(matchers[0].matched(path, false).is_ignore());
+    b.iter(|| {
+        assert!(matchers[0].matched(black_box(path), false).is_ignore())
+    });
+}
+
+#[bench]
 fn incremental_ignored_parent(b: &mut test::Bencher) {
     let ws = Workspace::new(0, 0, 0, false);
     let mut matchers = ws.builder().build_matchers();

@@ -32,6 +32,8 @@ first use. `incremental_warm` checks 256 paths after their directories have been
 cached. `incremental_ignored` checks a path beneath a pruned virtual environment.
 `incremental_warm_deep` checks 768 paths in a 12-level package tree, and
 `incremental_ignored_parent` directly hits an ignored directory's cache entry.
+`incremental_ignored_nested` checks a deeper descendant of a cached ignored
+virtual environment inside an otherwise allowed package.
 The `walk_dense_ignore_*` cases put rules in every directory of a deep tree,
 providing a control for optimizations that skip directories without rules.
 The `walk_multiple_roots_*` cases pass 64 sibling package directories as roots,
