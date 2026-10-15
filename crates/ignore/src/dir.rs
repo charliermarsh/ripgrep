@@ -113,13 +113,8 @@ pub(crate) struct Ignore {
 
 #[derive(Clone, Debug)]
 struct IgnoreInner {
-    /// A map of all existing directories that have already been
-    /// compiled into matchers.
-    ///
-    /// Note that this is never used during matching, only when adding new
-    /// parent directory matchers. This avoids needing to rebuild glob sets for
-    /// parent directories if many paths are being searched.
-    compiled: Arc<RwLock<HashMap<OsString, Weak<IgnoreInner>>>>,
+    /// Matcher configuration and caches shared by every directory.
+    shared: Arc<IgnoreShared>,
     /// The path to the directory that this matcher was built from.
     dir: PathBuf,
     /// An override matcher (default is empty).
@@ -136,28 +131,10 @@ struct IgnoreInner {
     /// Whether any absolute parent has ignore rules. When none do, matching
     /// can skip rewriting the candidate path for those parents.
     has_absolute_parent_rules: bool,
-    /// The directory that gitignores should be interpreted relative to.
-    ///
-    /// Usually this is the directory containing the gitignore file. But in
-    /// some cases, like for global gitignores or for gitignores specified
-    /// explicitly, this should generally be set to the current working
-    /// directory. This is only used for global gitignores or "explicit"
-    /// gitignores.
-    ///
-    /// When `None`, this means the CWD could not be determined or is unknown.
-    /// In this case, global gitignore files are ignored because they otherwise
-    /// cannot be matched correctly.
-    global_gitignores_relative_to: Option<PathBuf>,
-    /// Explicit global ignore matchers specified by the caller.
-    explicit_ignores: Arc<Vec<Gitignore>>,
-    /// Ignore files used in addition to `.ignore`
-    custom_ignore_filenames: Arc<Vec<OsString>>,
     /// The matcher for custom ignore files
     custom_ignore_matcher: Gitignore,
     /// The matcher for .ignore files.
     ignore_matcher: Gitignore,
-    /// A global gitignore matcher, usually from $XDG_CONFIG_HOME/git/ignore.
-    git_global_matcher: Arc<Gitignore>,
     /// The matcher for .gitignore files.
     git_ignore_matcher: Gitignore,
     /// Special matcher for `.git/info/exclude` files.
@@ -166,6 +143,19 @@ struct IgnoreInner {
     has_git: bool,
     /// Ignore config.
     opts: IgnoreOptions,
+}
+
+/// Matcher configuration and caches that are independent of the directory.
+#[derive(Debug)]
+struct IgnoreShared {
+    /// A cache of parent directory matchers, used only while adding parents.
+    compiled: RwLock<HashMap<OsString, Weak<IgnoreInner>>>,
+    /// Explicit global ignore matchers specified by the caller.
+    explicit_ignores: Vec<Gitignore>,
+    /// Ignore files used in addition to `.ignore`.
+    custom_ignore_filenames: Vec<OsString>,
+    /// A global gitignore matcher, usually from $XDG_CONFIG_HOME/git/ignore.
+    git_global_matcher: Gitignore,
 }
 
 impl Ignore {
@@ -228,7 +218,7 @@ impl Ignore {
         let mut errs = PartialErrorBuilder::default();
         let mut ig = self.clone();
         for parent in parents.into_iter().rev() {
-            let mut compiled = self.inner.compiled.write().unwrap();
+            let mut compiled = self.inner.shared.compiled.write().unwrap();
             if let Some(weak) = compiled.get(parent.as_os_str()) {
                 if let Some(prebuilt) = weak.upgrade() {
                     ig = Ignore {
@@ -313,7 +303,8 @@ impl Ignore {
         &self,
         entries: &[fs::DirEntry],
     ) -> IgnoreFilesFound {
-        let custom_ignore_filenames = &self.inner.custom_ignore_filenames;
+        let custom_ignore_filenames =
+            &self.inner.shared.custom_ignore_filenames;
         let mut files = IgnoreFilesFound {
             has_ignore: false,
             has_git_ignore: false,
@@ -363,15 +354,19 @@ impl Ignore {
         let mut errs = PartialErrorBuilder::default();
         let custom_ig_matcher = if self
             .inner
+            .shared
             .custom_ignore_filenames
             .is_empty()
         {
             Gitignore::empty()
         } else {
             let custom_ignore_names: Vec<&OsString> = match ignore_files_list {
-                None => self.inner.custom_ignore_filenames.iter().collect(),
+                None => {
+                    self.inner.shared.custom_ignore_filenames.iter().collect()
+                }
                 Some(m) => self
                     .inner
+                    .shared
                     .custom_ignore_filenames
                     .iter()
                     .zip(m.custom_ignore_files.iter())
@@ -444,25 +439,15 @@ impl Ignore {
             }
         };
         let ig = IgnoreInner {
-            compiled: self.inner.compiled.clone(),
+            shared: self.inner.shared.clone(),
             dir: dir.to_path_buf(),
             overrides: self.inner.overrides.clone(),
             types: self.inner.types.clone(),
             parent: Some(self.inner.clone()),
             is_absolute_parent: false,
             has_absolute_parent_rules: self.inner.has_absolute_parent_rules,
-            global_gitignores_relative_to: self
-                .inner
-                .global_gitignores_relative_to
-                .clone(),
-            explicit_ignores: self.inner.explicit_ignores.clone(),
-            custom_ignore_filenames: self
-                .inner
-                .custom_ignore_filenames
-                .clone(),
             custom_ignore_matcher: custom_ig_matcher,
             ignore_matcher: ig_matcher,
-            git_global_matcher: self.inner.git_global_matcher.clone(),
             git_ignore_matcher: gi_matcher,
             git_exclude_matcher: gi_exclude_matcher,
             has_git,
@@ -475,8 +460,9 @@ impl Ignore {
     fn has_any_ignore_rules(&self) -> bool {
         let opts = self.inner.opts;
         let has_custom_ignore_files =
-            !self.inner.custom_ignore_filenames.is_empty();
-        let has_explicit_ignores = !self.inner.explicit_ignores.is_empty();
+            !self.inner.shared.custom_ignore_filenames.is_empty();
+        let has_explicit_ignores =
+            !self.inner.shared.explicit_ignores.is_empty();
 
         opts.ignore
             || opts.git_global
@@ -666,7 +652,7 @@ impl Ignore {
                 }
             }
         }
-        for gi in self.inner.explicit_ignores.iter().rev() {
+        for gi in self.inner.shared.explicit_ignores.iter().rev() {
             if !m_explicit.is_none() {
                 break;
             }
@@ -674,6 +660,7 @@ impl Ignore {
         }
         let m_global = if any_git {
             self.inner
+                .shared
                 .git_global_matcher
                 .matched(&path, is_dir)
                 .map(IgnoreMatch::gitignore)
@@ -843,21 +830,22 @@ impl IgnoreBuilder {
 
         Ignore {
             inner: Arc::new(IgnoreInner {
-                compiled: Arc::new(RwLock::new(HashMap::new())),
+                shared: Arc::new(IgnoreShared {
+                    compiled: RwLock::new(HashMap::new()),
+                    explicit_ignores: self.explicit_ignores.clone(),
+                    custom_ignore_filenames: self
+                        .custom_ignore_filenames
+                        .clone(),
+                    git_global_matcher,
+                }),
                 dir: self.dir.clone(),
                 overrides: self.overrides.clone(),
                 types: self.types.clone(),
                 parent: None,
                 is_absolute_parent: true,
                 has_absolute_parent_rules: false,
-                global_gitignores_relative_to,
-                explicit_ignores: Arc::new(self.explicit_ignores.clone()),
-                custom_ignore_filenames: Arc::new(
-                    self.custom_ignore_filenames.clone(),
-                ),
                 custom_ignore_matcher: Gitignore::empty(),
                 ignore_matcher: Gitignore::empty(),
-                git_global_matcher: Arc::new(git_global_matcher),
                 git_ignore_matcher: Gitignore::empty(),
                 git_exclude_matcher: Gitignore::empty(),
                 has_git: false,
