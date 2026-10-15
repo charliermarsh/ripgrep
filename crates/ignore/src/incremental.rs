@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     path::{Path, PathBuf},
     sync::OnceLock,
 };
@@ -105,6 +105,47 @@ enum CachedDir {
     /// path rule or hidden-file filtering. Every descendant is consequently
     /// ignored, and ignore files inside this directory are not loaded.
     Ignored,
+}
+
+/// Returns a parent key for the directory cache, provided the final component
+/// is normal. On Unix, a byte-wise lookup avoids parsing path components.
+/// Cache keys contain only normal components, so a hit also validates the
+/// parent. Other spellings are handled by the component walk after a miss.
+#[inline]
+fn parent_key(relative: &Path) -> Option<&OsStr> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+
+        let bytes = relative.as_os_str().as_bytes();
+        let slash = memchr::memrchr(b'/', bytes)?;
+        let name = &bytes[slash + 1..];
+        if name.is_empty() || name == b"." || name == b".." {
+            return None;
+        }
+        let mut parent = &bytes[..slash];
+        // As with `Components::as_path`, trim trailing separators and `.`
+        // components so these spellings can still hit the cache directly.
+        loop {
+            match parent.last() {
+                Some(b'/') => parent = &parent[..parent.len() - 1],
+                Some(b'.') if parent.ends_with(b"/.") => {
+                    parent = &parent[..parent.len() - 2];
+                }
+                _ => return Some(OsStr::from_bytes(parent)),
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let mut components = relative.components();
+        match components.next_back() {
+            Some(std::path::Component::Normal(_)) => {
+                Some(components.as_path().as_os_str())
+            }
+            _ => None,
+        }
+    }
 }
 
 impl IncrementalIgnore {
@@ -319,15 +360,6 @@ impl IncrementalIgnore {
         is_dir: bool,
         errs: &mut PartialErrorBuilder,
     ) -> Option<IncrementalMatch> {
-        let mut components = relative
-            .components()
-            .filter_map(|component| match component {
-                std::path::Component::CurDir => None,
-                component => Some(component),
-            })
-            .peekable();
-        components.peek()?;
-
         // If the exact parent is cached, then all of its ancestors have
         // already been checked. An allowed cache entry is the matcher to use
         // for children of that directory, while an ignored cache entry is
@@ -338,12 +370,8 @@ impl IncrementalIgnore {
         // component. Invalid paths are handled by the component walk below.
         // Non-normalized parent paths can miss this byte-wise lookup; the
         // component walk below still finds their normalized cache entries.
-        let mut parent_components = relative.components();
-        if let Some(std::path::Component::Normal(_)) =
-            parent_components.next_back()
-        {
-            let parent = parent_components.as_path();
-            match self.dirs.get(parent.as_os_str()) {
+        if let Some(parent) = parent_key(relative) {
+            match self.dirs.get(parent) {
                 Some(CachedDir::Allowed(ignore)) => {
                     self.full_path.clear();
                     self.full_path.push(&self.root);
@@ -360,6 +388,15 @@ impl IncrementalIgnore {
                 None => {}
             }
         }
+
+        let mut components = relative
+            .components()
+            .filter_map(|component| match component {
+                std::path::Component::CurDir => None,
+                component => Some(component),
+            })
+            .peekable();
+        components.peek()?;
 
         let mut ignore = self.root_ignore(errs)?;
         let mut dir = PathBuf::new();
@@ -870,6 +907,9 @@ mod tests {
         assert!(matchedf(&mut m, "a/./b/ignored").is_ignore());
         assert!(matchedf(&mut m, "a//b/allowed").is_none());
         assert!(matchedf(&mut m, "./a/b/ignored").is_ignore());
+        assert!(matchedf(&mut m, "a/b/./ignored").is_ignore());
+        assert!(matchedf(&mut m, "a/b//ignored").is_ignore());
+        assert!(matchedf(&mut m, "a/b/.///allowed").is_none());
     }
 
     #[test]
@@ -899,9 +939,11 @@ mod tests {
             m.dirs.get(Path::new("a").join("b").as_os_str()),
             Some(CachedDir::Allowed(_))
         ));
-        let dir = matchedd(&mut m, "a/b");
-        assert!(dir.is_none());
-        assert!(dir.should_descend());
+        for path in ["a/b", "a/b/", "a/b/.", "a//b/", "a/./b/."] {
+            let dir = matchedd(&mut m, path);
+            assert!(dir.is_none(), "{path}");
+            assert!(dir.should_descend(), "{path}");
+        }
     }
 
     // Like `compiled_matchers_are_reused`, but with multiple roots.
