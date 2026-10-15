@@ -5,7 +5,7 @@ use std::{
     io,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering},
-    sync::{Arc, OnceLock},
+    sync::{Arc, Condvar, Mutex, OnceLock},
 };
 
 use {
@@ -1504,6 +1504,7 @@ impl WalkParallel {
         let quit_now = Arc::new(AtomicBool::new(false));
         let active_workers = Arc::new(AtomicUsize::new(threads));
         let stacks = Stack::new_for_each_thread(threads, stack);
+        let quit_signal = Arc::new(QuitSignal::default());
         // Collect all of the workers first. In the case that
         // `builder.build()` panics, we want that to happen and
         // propagate before we actually start to run any of the
@@ -1513,6 +1514,8 @@ impl WalkParallel {
             .map(|stack| Worker {
                 visitor: builder.build(),
                 stack,
+                quit_signal: quit_signal.clone(),
+                seen_quit_generation: 0,
                 quit_now: quit_now.clone(),
                 active_workers: active_workers.clone(),
                 max_depth: self.max_depth,
@@ -1714,6 +1717,36 @@ impl Stack {
     }
 }
 
+/// Interrupts idle workers' polling when a quit message is sent.
+#[derive(Default)]
+struct QuitSignal {
+    generation: Mutex<usize>,
+    condvar: Condvar,
+}
+
+impl QuitSignal {
+    /// Wait briefly, unless a notification arrived since the last wait.
+    fn wait(&self, seen: &mut usize) {
+        let generation = self.generation.lock().unwrap();
+        if *generation != *seen {
+            *seen = *generation;
+            return;
+        }
+        let duration = std::time::Duration::from_millis(1);
+        let (generation, _) =
+            self.condvar.wait_timeout(generation, duration).unwrap();
+        *seen = *generation;
+    }
+
+    /// Wake every idle worker without losing notifications between polls.
+    fn notify(&self) {
+        let mut generation = self.generation.lock().unwrap();
+        *generation = generation.wrapping_add(1);
+        drop(generation);
+        self.condvar.notify_all();
+    }
+}
+
 /// A worker is responsible for descending into directories, updating the
 /// ignore matchers, producing new work and invoking the caller's callback.
 ///
@@ -1728,6 +1761,10 @@ struct Worker<'s> {
     /// memory usage by keeping both the number of file paths and gitignore
     /// matchers in memory lower.
     stack: Stack,
+    /// Notifications that interrupt polling when the walk finishes.
+    quit_signal: Arc<QuitSignal>,
+    /// The latest quit notification observed by this worker.
+    seen_quit_generation: usize,
     /// Whether all workers should terminate at the next opportunity. Note
     /// that we need this because we don't want other `Work` to be done after
     /// we quit. We wouldn't need this if have a priority channel.
@@ -1979,12 +2016,9 @@ impl<'s> Worker<'s> {
                             value = Some(v);
                             break;
                         }
-                        // Our stack isn't blocking. Instead of burning the
-                        // CPU waiting, we let the thread sleep for a bit. In
-                        // general, this tends to only occur once the search is
-                        // approaching termination.
-                        let dur = std::time::Duration::from_millis(1);
-                        std::thread::sleep(dur);
+                        // Poll for new work without burning the CPU, but let
+                        // shutdown wake us before the timeout expires.
+                        self.quit_signal.wait(&mut self.seen_quit_generation);
                     }
                 }
             }
@@ -1994,6 +2028,7 @@ impl<'s> Worker<'s> {
     /// Indicates that all workers should quit immediately.
     fn quit_now(&self) {
         self.quit_now.store(true, AtomicOrdering::SeqCst);
+        self.quit_signal.notify();
     }
 
     /// Returns true if this worker should quit immediately.
@@ -2009,6 +2044,7 @@ impl<'s> Worker<'s> {
     /// Send a quit message.
     fn send_quit(&self) {
         self.stack.push(Message::Quit);
+        self.quit_signal.notify();
     }
 
     /// Receive work.
@@ -2701,6 +2737,52 @@ mod tests {
                 "a/b/c",
             ],
         );
+    }
+
+    #[test]
+    fn parallel_delayed_root_and_quit() {
+        let td = tmpdir();
+        for dir in 0..8 {
+            let path = td.path().join(format!("dir{dir}"));
+            mkdirp(&path);
+            for file in 0..4 {
+                wfile(path.join(format!("file{file}")), "");
+            }
+        }
+        let builder = WalkBuilder::new(td.path());
+        let mut expected: Vec<_> =
+            builder.build().map(|entry| entry.unwrap().into_path()).collect();
+        expected.sort();
+
+        for threads in [1, 2, 12] {
+            for quit in [false, true] {
+                let paths = Arc::new(Mutex::new(vec![]));
+                builder.clone().threads(threads).build_parallel().run(|| {
+                    let paths = paths.clone();
+                    Box::new(move |entry| {
+                        let entry = entry.unwrap();
+                        if entry.depth() == 0 {
+                            std::thread::sleep(
+                                std::time::Duration::from_millis(3),
+                            );
+                        }
+                        paths.lock().unwrap().push(entry.into_path());
+                        if quit {
+                            WalkState::Quit
+                        } else {
+                            WalkState::Continue
+                        }
+                    })
+                });
+                let mut actual = paths.lock().unwrap().clone();
+                actual.sort();
+                if quit {
+                    assert_eq!(actual, vec![td.path().to_path_buf()]);
+                } else {
+                    assert_eq!(actual, expected);
+                }
+            }
+        }
     }
 
     // This should always panic and never hang.
