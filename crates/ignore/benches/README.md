@@ -65,6 +65,11 @@ affinity for both revisions. Alternate baseline and candidate runs, and retain
 the per-run results instead of relying on a single measurement. Parallel walks
 also include worker startup and shutdown, which can dominate small projects.
 
+CPU affinity also affects match-index scratch-pool sizing: available parallelism
+is cached when the first pool is constructed. Pinning to one CPU therefore
+changes pool construction costs as well as scheduling. Report affinity with
+results, especially when comparing construction or cached matching costs.
+
 Ruff, uv, and ty enable fat LTO in release builds, while their profiling builds
 omit cross-crate LTO. Check promising changes in both configurations, especially
 when small matching benchmarks give inconsistent results:
