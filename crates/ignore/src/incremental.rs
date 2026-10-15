@@ -434,7 +434,7 @@ impl IncrementalIgnore {
                     .insert(dir.as_os_str().to_owned(), CachedDir::Ignored);
                 return Some(IncrementalMatch::ignore());
             }
-            let (child, err) = ignore.add_child(&path);
+            let (child, err) = ignore.add_child_for_matching(&path);
             errs.maybe_push(err);
             self.dirs.insert(
                 dir.as_os_str().to_owned(),
@@ -750,6 +750,27 @@ mod tests {
         assert!(matchedf(&mut m, "src/keep.cache").is_whitelist());
         assert!(matchedf(&mut m, "src/drop.svg").is_ignore());
         assert!(matchedf(&mut m, "src/keep.svg").is_whitelist());
+    }
+
+    #[test]
+    fn empty_directories_preserve_repository_boundaries() {
+        let td = tmpdir();
+        mkdirp(td.path().join(".git"));
+        mkdirp(td.path().join("a/b/.git"));
+        mkdirp(td.path().join("a/b/c"));
+        wfile(td.path().join(".gitignore"), "git-blocked\n");
+        wfile(td.path().join(".ignore"), "tool-blocked\n!allowed\n");
+
+        let mut m = one_matcher(&builder(td.path()));
+        assert!(matchedf(&mut m, "a/git-blocked").is_ignore());
+        assert!(matchedf(&mut m, "a/b/c/git-blocked").is_none());
+        assert!(matchedf(&mut m, "a/b/c/tool-blocked").is_ignore());
+        assert!(matchedf(&mut m, "a/b/c/allowed").is_whitelist());
+
+        wfile(td.path().join("a/b/c/.ignore"), "git-blocked\n");
+        assert!(matchedf(&mut m, "a/b/c/git-blocked").is_none());
+        let mut rebuilt = one_matcher(&builder(td.path()));
+        assert!(matchedf(&mut rebuilt, "a/b/c/git-blocked").is_ignore());
     }
 
     // Test that glob overrides take precedence over ignore files.
