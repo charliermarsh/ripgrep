@@ -220,6 +220,23 @@ impl Ignore {
         let mut errs = PartialErrorBuilder::default();
         let mut ig = self.clone();
         for parent in parents.into_iter().rev() {
+            if let Some(prebuilt) = self
+                .inner
+                .shared
+                .compiled
+                .read()
+                .unwrap()
+                .get(parent.as_os_str())
+                .and_then(Weak::upgrade)
+            {
+                ig = Ignore {
+                    inner: prebuilt,
+                    absolute_base: Some(absolute_base.clone()),
+                };
+                continue;
+            }
+            // Another root may have populated the cache before we acquired
+            // the write lock, so check it again before building a matcher.
             let mut compiled = self.inner.shared.compiled.write().unwrap();
             if let Some(weak) = compiled.get(parent.as_os_str()) {
                 if let Some(prebuilt) = weak.upgrade() {
@@ -234,7 +251,8 @@ impl Ignore {
             errs.maybe_push(err);
             igtmp.is_absolute_parent = true;
             // `add_child_path` already checked repository markers when needed.
-            igtmp.has_git &= self.inner.opts.git_ignore;            igtmp.has_absolute_parent_rules |=
+            igtmp.has_git &= self.inner.opts.git_ignore;
+            igtmp.has_absolute_parent_rules |=
                 !igtmp.custom_ignore_matcher.is_empty()
                     || !igtmp.ignore_matcher.is_empty()
                     || !igtmp.git_ignore_matcher.is_empty()
