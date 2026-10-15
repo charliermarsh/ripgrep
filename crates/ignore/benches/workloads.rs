@@ -468,3 +468,31 @@ fn match_single_path_whitelist(b: &mut test::Bencher) {
         }
     });
 }
+
+#[bench]
+fn walk_gitignore_only_parallel_12(b: &mut test::Bencher) {
+    let ws = Workspace::new(128, 1, 32, false);
+    fs::remove_file(ws.root.join(".ignore")).unwrap();
+    fs::remove_file(ws.root.join(".git/info/exclude")).unwrap();
+    let builder = ws.builder();
+    // The private module is visible without .git/info/exclude.
+    let expected = ws.python_files + 1;
+    assert_eq!(walk(&builder, 12), expected);
+    b.iter(|| assert_eq!(walk(black_box(&builder), 12), expected));
+}
+
+#[bench]
+fn incremental_gitignore_only(b: &mut test::Bencher) {
+    let ws = Workspace::new(16, 4, 4, false);
+    fs::remove_file(ws.root.join(".ignore")).unwrap();
+    fs::remove_file(ws.root.join(".git/info/exclude")).unwrap();
+    let mut matchers = ws.builder().build_matchers();
+    for path in &ws.paths {
+        assert!(!matchers[0].matched(path, false).is_ignore());
+    }
+    b.iter(|| {
+        for path in &ws.paths {
+            assert!(!matchers[0].matched(black_box(path), false).is_ignore());
+        }
+    });
+}

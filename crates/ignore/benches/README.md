@@ -42,6 +42,8 @@ The `build_*` and `match_*` microbenchmarks help distinguish compilation and
 matching costs from filesystem traversal.
 The single-pattern cases cover bytecode exclusions, the directory whitelist
 used in Ruff's and uv's root `.ignore` files, and ty's vendored-typeshed whitelist.
+The `*gitignore_only*` controls remove `.ignore` and `.git/info/exclude`, covering
+projects that rely solely on a `.gitignore` with multiple patterns.
 
 Like the `globset` benchmarks, these use Rust's nightly `test` harness:
 
