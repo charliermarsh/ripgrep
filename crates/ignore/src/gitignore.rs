@@ -207,6 +207,11 @@ impl Gitignore {
         if self.is_empty() {
             return Match::None;
         }
+        // A directory-only rule cannot match a file, so skip stripping the
+        // root from its path when this is the only rule.
+        if !is_dir && self.globs.len() == 1 && self.globs[0].is_only_dir() {
+            return Match::None;
+        }
         self.matched_stripped(self.strip(path.as_ref()), is_dir)
     }
 
@@ -265,6 +270,19 @@ impl Gitignore {
             return Match::None;
         }
         let path = path.as_ref();
+        if let [glob] = self.globs.as_slice() {
+            if glob.is_only_dir() && !is_dir {
+                return Match::None;
+            }
+            if !self.set.is_match(path) {
+                return Match::None;
+            }
+            return if glob.is_whitelist() {
+                Match::Whitelist(glob)
+            } else {
+                Match::Ignore(glob)
+            };
+        }
         let mut matches = self.matches.as_ref().unwrap().get();
         let candidate = Candidate::new(path);
         self.set.matches_candidate_into(&candidate, &mut *matches);
@@ -359,7 +377,7 @@ impl GitignoreBuilder {
             globs: self.globs.clone(),
             num_ignores: nignore as u64,
             num_whitelists: nwhite as u64,
-            matches: if self.globs.is_empty() {
+            matches: if self.globs.len() <= 1 {
                 None
             } else {
                 Some(Arc::new(Pool::with_available_parallelism_capacity(
