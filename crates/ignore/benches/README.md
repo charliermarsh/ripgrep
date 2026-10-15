@@ -38,6 +38,8 @@ cached. `incremental_warm_noncanonical` checks the same paths with an internal
 virtual environment inside an otherwise allowed package.
 The `walk_dense_ignore_*` cases put rules in every directory of a deep tree,
 providing a control for optimizations that skip directories without rules.
+`incremental_dense_ignore_cold` and `incremental_dense_ignore_warm` use the same
+tree to check incremental matching when nearly every cached directory has rules.
 The `walk_multiple_roots_*` cases pass 64 sibling package directories as roots,
 covering parent-matcher reuse when Ruff receives multiple directory arguments.
 `walk_with_overrides_and_types` exercises explicitly configured override and

@@ -387,7 +387,8 @@ fn incremental_ignored_parent(b: &mut test::Bencher) {
     });
 }
 
-fn dense_ignore_walk(b: &mut test::Bencher, threads: usize) {
+/// Create a deep tree with ignore rules at every package level.
+fn dense_ignore_workspace() -> Workspace {
     let ws = Workspace::new(16, 12, 16, true);
     for package in 0..16 {
         let mut dir = format!("packages/pkg{package}");
@@ -399,6 +400,11 @@ fn dense_ignore_walk(b: &mut test::Bencher, threads: usize) {
             );
         }
     }
+    ws
+}
+
+fn dense_ignore_walk(b: &mut test::Bencher, threads: usize) {
+    let ws = dense_ignore_workspace();
     let builder = ws.builder();
     assert_eq!(walk(&builder, threads), ws.python_files);
     b.iter(|| assert_eq!(walk(black_box(&builder), threads), ws.python_files));
@@ -412,6 +418,32 @@ fn walk_dense_ignore_serial(b: &mut test::Bencher) {
 #[bench]
 fn walk_dense_ignore_parallel_12(b: &mut test::Bencher) {
     dense_ignore_walk(b, 12);
+}
+
+#[bench]
+fn incremental_dense_ignore_cold(b: &mut test::Bencher) {
+    let ws = dense_ignore_workspace();
+    let builder = ws.builder();
+    b.iter(|| {
+        let mut matchers = builder.build_matchers();
+        for path in &ws.paths {
+            assert!(!matchers[0].matched(black_box(path), false).is_ignore());
+        }
+    });
+}
+
+#[bench]
+fn incremental_dense_ignore_warm(b: &mut test::Bencher) {
+    let ws = dense_ignore_workspace();
+    let mut matchers = ws.builder().build_matchers();
+    for path in &ws.paths {
+        assert!(!matchers[0].matched(path, false).is_ignore());
+    }
+    b.iter(|| {
+        for path in &ws.paths {
+            assert!(!matchers[0].matched(black_box(path), false).is_ignore());
+        }
+    });
 }
 
 fn multiple_roots_walk(b: &mut test::Bencher, threads: usize) {
