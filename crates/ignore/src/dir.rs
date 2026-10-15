@@ -220,6 +220,23 @@ impl Ignore {
         let mut errs = PartialErrorBuilder::default();
         let mut ig = self.clone();
         for parent in parents.into_iter().rev() {
+            if let Some(prebuilt) = self
+                .inner
+                .shared
+                .compiled
+                .read()
+                .unwrap()
+                .get(parent.as_os_str())
+                .and_then(Weak::upgrade)
+            {
+                ig = Ignore {
+                    inner: prebuilt,
+                    absolute_base: Some(absolute_base.clone()),
+                };
+                continue;
+            }
+            // Another root may have populated the cache before we acquired
+            // the write lock, so check it again before building a matcher.
             let mut compiled = self.inner.shared.compiled.write().unwrap();
             if let Some(weak) = compiled.get(parent.as_os_str()) {
                 if let Some(prebuilt) = weak.upgrade() {
