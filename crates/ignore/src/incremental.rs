@@ -396,7 +396,11 @@ impl IncrementalIgnore {
         relative: &Path,
         is_dir: bool,
     ) -> IncrementalMatch {
-        let path = self.root.join(relative);
+        let capacity =
+            self.root.as_os_str().len() + relative.as_os_str().len() + 1;
+        let mut path = PathBuf::with_capacity(capacity);
+        path.push(&self.root);
+        path.push(relative);
         let mut mat = IncrementalMatch::from_match(
             ignore.matched(&path, is_dir).map(|_| ()),
             is_dir,
