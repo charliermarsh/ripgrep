@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    ffi::OsString,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
@@ -62,7 +63,8 @@ pub struct IncrementalIgnore {
     /// The matcher for the configured root directory, loaded on first use.
     ignore: RootIgnore,
     /// Directory paths relative to `root`, excluding the root itself.
-    dirs: HashMap<PathBuf, CachedDir>,
+    /// Keys are assembled from components, so hashing need not normalize them.
+    dirs: HashMap<OsString, CachedDir>,
     /// A reusable buffer for matching paths under the root.
     /// Keep it out of line to limit growth of the frequently accessed state.
     full_path: Box<PathBuf>,
@@ -334,12 +336,14 @@ impl IncrementalIgnore {
         //
         // Only try the fast path when the final component is a normal path
         // component. Invalid paths are handled by the component walk below.
+        // Non-normalized parent paths can miss this byte-wise lookup; the
+        // component walk below still finds their normalized cache entries.
         let mut parent_components = relative.components();
         if let Some(std::path::Component::Normal(_)) =
             parent_components.next_back()
         {
             let parent = parent_components.as_path();
-            match self.dirs.get(parent) {
+            match self.dirs.get(parent.as_os_str()) {
                 Some(CachedDir::Allowed(ignore)) => {
                     self.full_path.clear();
                     self.full_path.push(&self.root);
@@ -373,7 +377,7 @@ impl IncrementalIgnore {
                 break;
             }
             dir.push(component.as_os_str());
-            match self.dirs.get(&dir) {
+            match self.dirs.get(dir.as_os_str()) {
                 Some(CachedDir::Allowed(cached)) => {
                     ignore = cached.clone();
                     continue;
@@ -389,12 +393,16 @@ impl IncrementalIgnore {
             let is_hidden =
                 self.options.hidden && mat.is_none() && is_hidden_path(&path);
             if mat.is_ignore() || is_hidden {
-                self.dirs.insert(dir.clone(), CachedDir::Ignored);
+                self.dirs
+                    .insert(dir.as_os_str().to_owned(), CachedDir::Ignored);
                 return Some(IncrementalMatch::ignore());
             }
             let (child, err) = ignore.add_child(&path);
             errs.maybe_push(err);
-            self.dirs.insert(dir.clone(), CachedDir::Allowed(child.clone()));
+            self.dirs.insert(
+                dir.as_os_str().to_owned(),
+                CachedDir::Allowed(child.clone()),
+            );
             ignore = child;
         }
 
@@ -851,10 +859,17 @@ mod tests {
         let mut m = one_matcher(&builder(td.path()));
         assert!(matchedf(&mut m, "a/b/allowed").is_none());
         assert!(matches!(
-            m.dirs.get(Path::new("a/b")),
+            m.dirs.get(Path::new("a").join("b").as_os_str()),
             Some(CachedDir::Allowed(_))
         ));
         assert!(matchedf(&mut m, "a/b/ignored").is_ignore());
+
+        // Equivalent spellings still use the cached snapshot when the
+        // direct parent lookup misses.
+        wfile(td.path().join("a/b/.ignore"), "!ignored\nallowed\n");
+        assert!(matchedf(&mut m, "a/./b/ignored").is_ignore());
+        assert!(matchedf(&mut m, "a//b/allowed").is_none());
+        assert!(matchedf(&mut m, "./a/b/ignored").is_ignore());
     }
 
     #[test]
@@ -866,7 +881,7 @@ mod tests {
         let mut m = one_matcher(&builder(td.path()));
         assert!(matchedf(&mut m, "blocked/first").is_ignore());
         assert!(matches!(
-            m.dirs.get(Path::new("blocked")),
+            m.dirs.get(Path::new("blocked").as_os_str()),
             Some(CachedDir::Ignored)
         ));
         assert!(matchedf(&mut m, "blocked/second").is_ignore());
@@ -881,7 +896,7 @@ mod tests {
         let mut m = one_matcher(&builder(td.path()));
         assert!(matchedf(&mut m, "a/b/file").is_ignore());
         assert!(matches!(
-            m.dirs.get(Path::new("a/b")),
+            m.dirs.get(Path::new("a").join("b").as_os_str()),
             Some(CachedDir::Allowed(_))
         ));
         let dir = matchedd(&mut m, "a/b");
