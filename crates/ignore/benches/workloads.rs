@@ -268,6 +268,28 @@ fn incremental_warm(b: &mut test::Bencher) {
 }
 
 #[bench]
+fn incremental_warm_noncanonical(b: &mut test::Bencher) {
+    let ws = Workspace::new(16, 4, 4, true);
+    let paths: Vec<_> = ws
+        .paths
+        .iter()
+        .map(|path| {
+            Path::new("packages/.")
+                .join(path.strip_prefix("packages").unwrap())
+        })
+        .collect();
+    let mut matchers = ws.builder().build_matchers();
+    for path in &paths {
+        assert!(!matchers[0].matched(path, false).is_ignore());
+    }
+    b.iter(|| {
+        for path in &paths {
+            assert!(!matchers[0].matched(black_box(path), false).is_ignore());
+        }
+    });
+}
+
+#[bench]
 fn incremental_ignored(b: &mut test::Bencher) {
     let ws = Workspace::new(0, 0, 0, false);
     let mut matchers = ws.builder().build_matchers();

@@ -29,7 +29,9 @@ other application work; they are not end-to-end application speedups.
 
 `incremental_cold` includes building matchers and loading directory rules on
 first use. `incremental_warm` checks 256 paths after their directories have been
-cached. `incremental_ignored` checks a path beneath a pruned virtual environment.
+cached. `incremental_warm_noncanonical` checks the same paths with an internal
+`./` component, exercising normalization during cached queries.
+`incremental_ignored` checks a path beneath a pruned virtual environment.
 `incremental_warm_deep` checks 768 paths in a 12-level package tree, and
 `incremental_ignored_parent` directly hits an ignored directory's cache entry.
 `incremental_ignored_nested` checks a deeper descendant of a cached ignored
