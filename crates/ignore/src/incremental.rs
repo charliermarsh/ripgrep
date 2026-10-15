@@ -64,6 +64,7 @@ pub struct IncrementalIgnore {
     /// Directory paths relative to `root`, excluding the root itself.
     dirs: HashMap<PathBuf, CachedDir>,
     /// A reusable buffer for matching paths under the root.
+    /// Keep it out of line to limit growth of the frequently accessed state.
     full_path: Box<PathBuf>,
     /// Options for additional filtering beyond gitignore.
     options: IncrementalIgnoreOptions,
