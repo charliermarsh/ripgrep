@@ -136,18 +136,6 @@ struct IgnoreInner {
     /// Whether any absolute parent has ignore rules. When none do, matching
     /// can skip rewriting the candidate path for those parents.
     has_absolute_parent_rules: bool,
-    /// The directory that gitignores should be interpreted relative to.
-    ///
-    /// Usually this is the directory containing the gitignore file. But in
-    /// some cases, like for global gitignores or for gitignores specified
-    /// explicitly, this should generally be set to the current working
-    /// directory. This is only used for global gitignores or "explicit"
-    /// gitignores.
-    ///
-    /// When `None`, this means the CWD could not be determined or is unknown.
-    /// In this case, global gitignore files are ignored because they otherwise
-    /// cannot be matched correctly.
-    global_gitignores_relative_to: Option<PathBuf>,
     /// Explicit global ignore matchers specified by the caller.
     explicit_ignores: Arc<Vec<Gitignore>>,
     /// Ignore files used in addition to `.ignore`
@@ -457,10 +445,6 @@ impl Ignore {
             parent: Some(self.inner.clone()),
             is_absolute_parent: false,
             has_absolute_parent_rules: self.inner.has_absolute_parent_rules,
-            global_gitignores_relative_to: self
-                .inner
-                .global_gitignores_relative_to
-                .clone(),
             explicit_ignores: self.inner.explicit_ignores.clone(),
             custom_ignore_filenames: self
                 .inner
@@ -858,7 +842,6 @@ impl IgnoreBuilder {
                 parent: None,
                 is_absolute_parent: true,
                 has_absolute_parent_rules: false,
-                global_gitignores_relative_to,
                 explicit_ignores: Arc::new(self.explicit_ignores.clone()),
                 custom_ignore_filenames: Arc::new(
                     self.custom_ignore_filenames.clone(),
