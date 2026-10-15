@@ -520,7 +520,7 @@ impl GlobSet {
             "built glob set; {} literals, {} basenames, {} extensions, \
                 {} prefixes, {} suffixes, {} required extensions, \
                 {} basename regexes, {} regexes",
-            lits.0.len(),
+            lits.literals.len(),
             base_lits.0.len(),
             exts.0.len(),
             prefixes.literals.len(),
@@ -537,7 +537,7 @@ impl GlobSet {
         if !base_lits.0.is_empty() {
             strats.push(GlobSetMatchStrategy::BasenameLiteral(base_lits));
         }
-        if !lits.0.is_empty() {
+        if !lits.literals.is_empty() {
             strats.push(GlobSetMatchStrategy::Literal(lits));
         }
         if !suffixes.is_empty() {
@@ -728,23 +728,32 @@ impl GlobSetMatchStrategy {
 }
 
 #[derive(Clone, Debug)]
-struct LiteralStrategy(fnv::HashMap<Vec<u8>, Vec<usize>>);
+struct LiteralStrategy {
+    literals: fnv::HashMap<Vec<u8>, Vec<usize>>,
+    // Literal byte lengths modulo 64, checked before hashing the path.
+    lengths: u64,
+}
 
 impl LiteralStrategy {
     fn new() -> LiteralStrategy {
-        LiteralStrategy(fnv::HashMap::default())
+        LiteralStrategy { literals: fnv::HashMap::default(), lengths: 0 }
     }
 
     fn add(&mut self, global_index: usize, lit: String) {
-        self.0.entry(lit.into_bytes()).or_insert(vec![]).push(global_index);
+        self.lengths |= 1 << (lit.len() % 64);
+        self.literals
+            .entry(lit.into_bytes())
+            .or_insert(vec![])
+            .push(global_index);
     }
 
     fn is_match(&self, candidate: &Candidate<'_>) -> bool {
-        self.0.contains_key(candidate.path.as_bytes())
+        self.may_match_length(candidate.path.len())
+            && self.literals.contains_key(candidate.path.as_bytes())
     }
 
     fn matches_all(&self, candidate: &Candidate<'_>) -> bool {
-        self.0.len() == 1 && self.is_match(candidate)
+        self.literals.len() == 1 && self.is_match(candidate)
     }
 
     #[inline(never)]
@@ -753,9 +762,17 @@ impl LiteralStrategy {
         candidate: &Candidate<'_>,
         matches: &mut Vec<usize>,
     ) {
-        if let Some(hits) = self.0.get(candidate.path.as_bytes()) {
+        if !self.may_match_length(candidate.path.len()) {
+            return;
+        }
+        if let Some(hits) = self.literals.get(candidate.path.as_bytes()) {
             matches.extend(hits);
         }
+    }
+
+    /// Returns whether a length could match, allowing collisions modulo 64.
+    fn may_match_length(&self, len: usize) -> bool {
+        self.lengths & (1 << (len % 64)) != 0
     }
 }
 
@@ -1284,6 +1301,39 @@ mod tests {
 
         assert!(!set.matches_all("Ca"));
         assert!(!set.matches_all("foo.c"));
+    }
+
+    #[test]
+    fn literal_length_filter() {
+        let lengths = [0, 1, 63, 64, 65, 127, 128, 129];
+        let mut patterns: Vec<_> =
+            lengths.iter().map(|&len| "a".repeat(len)).collect();
+        patterns.extend(["é.py".to_owned(), r"foo\*bar".to_owned()]);
+        let set = GlobSet::new(patterns.iter().map(|pattern| {
+            GlobBuilder::new(pattern).backslash_escape(true).build().unwrap()
+        }))
+        .unwrap();
+        for (i, &len) in lengths.iter().enumerate() {
+            let path = "a".repeat(len);
+            assert!(set.is_match(&path));
+            assert_eq!(set.matches(&path), vec![i]);
+        }
+        assert_eq!(set.matches("é.py"), vec![8]);
+        assert_eq!(set.matches("foo*bar"), vec![9]);
+        for len in [2, 62, 66, 126, 130] {
+            assert!(!set.is_match("a".repeat(len)));
+        }
+        let literal = "a".repeat(65);
+        let duplicates = GlobSet::new([
+            Glob::new(&literal).unwrap(),
+            Glob::new(&literal).unwrap(),
+        ])
+        .unwrap();
+        assert!(duplicates.matches_all(&literal));
+        assert_eq!(duplicates.matches(&literal), vec![0, 1]);
+        assert!(!duplicates.is_match("a"));
+        assert!(!duplicates.matches_all("a"));
+        assert!(!duplicates.is_match("b".repeat(65)));
     }
 
     #[test]
