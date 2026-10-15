@@ -317,3 +317,55 @@ fn match_python_gitignore(b: &mut test::Bencher) {
         );
     });
 }
+
+#[bench]
+fn incremental_warm_deep(b: &mut test::Bencher) {
+    let ws = Workspace::new(16, 12, 4, true);
+    let mut matchers = ws.builder().build_matchers();
+    for path in &ws.paths {
+        assert!(!matchers[0].matched(path, false).is_ignore());
+    }
+    b.iter(|| {
+        for path in &ws.paths {
+            assert!(!matchers[0].matched(black_box(path), false).is_ignore());
+        }
+    });
+}
+
+#[bench]
+fn incremental_ignored_parent(b: &mut test::Bencher) {
+    let ws = Workspace::new(0, 0, 0, false);
+    let mut matchers = ws.builder().build_matchers();
+    let path = Path::new(".venv/dependency.py");
+    assert!(matchers[0].matched(path, false).is_ignore());
+    b.iter(|| {
+        assert!(matchers[0].matched(black_box(path), false).is_ignore())
+    });
+}
+
+fn dense_ignore_walk(b: &mut test::Bencher, threads: usize) {
+    let ws = Workspace::new(16, 12, 16, true);
+    for package in 0..16 {
+        let mut dir = format!("packages/pkg{package}");
+        for level in 0..12 {
+            dir.push_str(&format!("/level{level}"));
+            ws.write(
+                &format!("{dir}/.gitignore"),
+                "generated_*.py\n!generated_keep.py\n",
+            );
+        }
+    }
+    let builder = ws.builder();
+    assert_eq!(walk(&builder, threads), ws.python_files);
+    b.iter(|| assert_eq!(walk(black_box(&builder), threads), ws.python_files));
+}
+
+#[bench]
+fn walk_dense_ignore_serial(b: &mut test::Bencher) {
+    dense_ignore_walk(b, 0);
+}
+
+#[bench]
+fn walk_dense_ignore_parallel_12(b: &mut test::Bencher) {
+    dense_ignore_walk(b, 12);
+}

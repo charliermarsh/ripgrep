@@ -30,6 +30,10 @@ other application work; they are not end-to-end application speedups.
 `incremental_cold` includes building matchers and loading directory rules on
 first use. `incremental_warm` checks 256 paths after their directories have been
 cached. `incremental_ignored` checks a path beneath a pruned virtual environment.
+`incremental_warm_deep` checks 768 paths in a 12-level package tree, and
+`incremental_ignored_parent` directly hits an ignored directory's cache entry.
+The `walk_dense_ignore_*` cases put rules in every directory of a deep tree,
+providing a control for optimizations that skip directories without rules.
 The `build_*` and `match_*` microbenchmarks help distinguish compilation and
 matching costs from filesystem traversal.
 
