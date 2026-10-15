@@ -241,12 +241,8 @@ impl Ignore {
             let (mut igtmp, err) = ig.add_child_path(parent);
             errs.maybe_push(err);
             igtmp.is_absolute_parent = true;
-            igtmp.has_git =
-                if self.inner.opts.require_git && self.inner.opts.git_ignore {
-                    parent.join(".git").exists() || parent.join(".jj").exists()
-                } else {
-                    false
-                };
+            // `add_child_path` already checked repository markers when needed.
+            igtmp.has_git &= self.inner.opts.git_ignore;
             igtmp.has_absolute_parent_rules |=
                 !igtmp.custom_ignore_matcher.is_empty()
                     || !igtmp.ignore_matcher.is_empty()
