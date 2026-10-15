@@ -141,6 +141,8 @@ struct IgnoreInner {
     git_exclude_matcher: Gitignore,
     /// Whether this directory contains a .git sub-directory.
     has_git: bool,
+    /// Whether any parent directory has a repository marker.
+    has_git_parent: bool,
     /// Ignore config.
     opts: IgnoreOptions,
 }
@@ -451,6 +453,7 @@ impl Ignore {
             git_ignore_matcher: gi_matcher,
             git_exclude_matcher: gi_exclude_matcher,
             has_git,
+            has_git_parent: self.inner.has_git || self.inner.has_git_parent,
             opts: self.inner.opts,
         };
         (ig, errs.into_error_option())
@@ -549,7 +552,8 @@ impl Ignore {
             mut m_explicit,
         ) = (Match::None, Match::None, Match::None, Match::None, Match::None);
         let any_git = !self.inner.opts.require_git
-            || self.parents().any(|ig| ig.inner.has_git);
+            || self.inner.has_git
+            || self.inner.has_git_parent;
         let mut saw_git = false;
         for ig in self.parents().take_while(|ig| !ig.inner.is_absolute_parent)
         {
@@ -849,6 +853,7 @@ impl IgnoreBuilder {
                 git_ignore_matcher: Gitignore::empty(),
                 git_exclude_matcher: Gitignore::empty(),
                 has_git: false,
+                has_git_parent: false,
                 opts: self.opts,
             }),
             absolute_base: None,
