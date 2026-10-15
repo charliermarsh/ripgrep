@@ -265,6 +265,19 @@ impl Gitignore {
             return Match::None;
         }
         let path = path.as_ref();
+        if let [glob] = self.globs.as_slice() {
+            if glob.is_only_dir() && !is_dir {
+                return Match::None;
+            }
+            if !self.set.is_match(path) {
+                return Match::None;
+            }
+            return if glob.is_whitelist() {
+                Match::Whitelist(glob)
+            } else {
+                Match::Ignore(glob)
+            };
+        }
         let mut matches = self.matches.as_ref().unwrap().get();
         let candidate = Candidate::new(path);
         self.set.matches_candidate_into(&candidate, &mut *matches);
