@@ -369,3 +369,24 @@ fn walk_dense_ignore_serial(b: &mut test::Bencher) {
 fn walk_dense_ignore_parallel_12(b: &mut test::Bencher) {
     dense_ignore_walk(b, 12);
 }
+
+fn multiple_roots_walk(b: &mut test::Bencher, threads: usize) {
+    let ws = Workspace::new(64, 1, 32, false);
+    let mut builder = WalkBuilder::new(ws.root.join("packages/pkg0"));
+    builder.current_dir(&ws.root).hidden(false).git_global(false);
+    for package in 1..64 {
+        builder.add(ws.root.join(format!("packages/pkg{package}")));
+    }
+    assert_eq!(walk(&builder, threads), ws.python_files);
+    b.iter(|| assert_eq!(walk(black_box(&builder), threads), ws.python_files));
+}
+
+#[bench]
+fn walk_multiple_roots_parallel_1(b: &mut test::Bencher) {
+    multiple_roots_walk(b, 1);
+}
+
+#[bench]
+fn walk_multiple_roots_parallel_12(b: &mut test::Bencher) {
+    multiple_roots_walk(b, 12);
+}
