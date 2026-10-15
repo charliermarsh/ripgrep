@@ -16,7 +16,8 @@ use std::{
 
 use ignore::{
     DirEntry, Error, ParallelVisitor, ParallelVisitorBuilder, WalkBuilder,
-    WalkState, gitignore::GitignoreBuilder,
+    WalkState, gitignore::GitignoreBuilder, overrides::OverrideBuilder,
+    types::TypesBuilder,
 };
 
 const RULES: &str = "\
@@ -389,4 +390,20 @@ fn walk_multiple_roots_parallel_1(b: &mut test::Bencher) {
 #[bench]
 fn walk_multiple_roots_parallel_12(b: &mut test::Bencher) {
     multiple_roots_walk(b, 12);
+}
+
+#[bench]
+fn walk_with_overrides_and_types(b: &mut test::Bencher) {
+    let ws = Workspace::new(64, 3, 16, true);
+    let mut overrides = OverrideBuilder::new(&ws.root);
+    overrides.add("!*.txt").unwrap();
+    let mut types = TypesBuilder::new();
+    types.add("python", "*.py").unwrap();
+    types.select("python");
+    let mut builder = ws.builder();
+    builder
+        .overrides(overrides.build().unwrap())
+        .types(types.build().unwrap());
+    assert_eq!(walk(&builder, 12), ws.python_files);
+    b.iter(|| assert_eq!(walk(black_box(&builder), 12), ws.python_files));
 }

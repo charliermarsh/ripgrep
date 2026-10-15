@@ -36,6 +36,8 @@ The `walk_dense_ignore_*` cases put rules in every directory of a deep tree,
 providing a control for optimizations that skip directories without rules.
 The `walk_multiple_roots_*` cases pass 64 sibling package directories as roots,
 covering parent-matcher reuse when Ruff receives multiple directory arguments.
+`walk_with_overrides_and_types` exercises explicitly configured override and
+file-type matchers as a control for their more common empty configuration.
 The `build_*` and `match_*` microbenchmarks help distinguish compilation and
 matching costs from filesystem traversal.
 
