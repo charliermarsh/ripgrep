@@ -393,7 +393,8 @@ impl IncrementalIgnore {
             let is_hidden =
                 self.options.hidden && mat.is_none() && is_hidden_path(&path);
             if mat.is_ignore() || is_hidden {
-                self.dirs.insert(dir.as_os_str().to_owned(), CachedDir::Ignored);
+                self.dirs
+                    .insert(dir.as_os_str().to_owned(), CachedDir::Ignored);
                 return Some(IncrementalMatch::ignore());
             }
             let (child, err) = ignore.add_child(&path);
