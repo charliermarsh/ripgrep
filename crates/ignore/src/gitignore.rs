@@ -320,7 +320,11 @@ impl Gitignore {
         //
         // As an additional special case, if the root is just `.`, then we
         // shouldn't try to strip anything, e.g., when path begins with a `.`.
-        if self.root != Path::new(".") && !is_file_name(path) {
+        // A rooted path cannot be `.`, so avoid comparing its components
+        // in this common case.
+        if (self.root.has_root() || self.root != Path::new("."))
+            && !is_file_name(path)
+        {
             if let Some(p) = strip_prefix(&self.root, path) {
                 path = p;
                 // If we're left with a leading slash, get rid of it.
