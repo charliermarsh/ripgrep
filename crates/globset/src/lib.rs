@@ -552,9 +552,9 @@ impl GlobSet {
             ));
         }
         if !base_regexes.is_empty() {
-            strats.push(GlobSetMatchStrategy::BasenameRegex(
-                base_regexes.regex_set()?,
-            ));
+            let mut set = base_regexes.regex_set()?;
+            set.basename = true;
+            strats.push(GlobSetMatchStrategy::Regex(set));
         }
         if !regexes.is_empty() {
             strats.push(GlobSetMatchStrategy::Regex(regexes.regex_set()?));
@@ -679,7 +679,6 @@ enum GlobSetMatchStrategy {
     Prefix(PrefixStrategy),
     Suffix(SuffixStrategy),
     RequiredExtension(RequiredExtensionStrategy),
-    BasenameRegex(RegexSetStrategy),
     Regex(RegexSetStrategy),
 }
 
@@ -693,8 +692,7 @@ impl GlobSetMatchStrategy {
             Prefix(ref s) => s.is_match(candidate),
             Suffix(ref s) => s.is_match(candidate),
             RequiredExtension(ref s) => s.is_match(candidate),
-            BasenameRegex(ref s) => s.is_match(candidate.basename_for_regex()),
-            Regex(ref s) => s.is_match(&candidate.path),
+            Regex(ref s) => s.is_match(candidate),
         }
     }
 
@@ -711,10 +709,7 @@ impl GlobSetMatchStrategy {
             Prefix(ref s) => s.matches_into(candidate, matches),
             Suffix(ref s) => s.matches_into(candidate, matches),
             RequiredExtension(ref s) => s.matches_into(candidate, matches),
-            BasenameRegex(ref s) => {
-                s.matches_into(candidate.basename_for_regex(), matches)
-            }
-            Regex(ref s) => s.matches_into(&candidate.path, matches),
+            Regex(ref s) => s.matches_into(candidate, matches),
         }
     }
 
@@ -727,10 +722,7 @@ impl GlobSetMatchStrategy {
             Prefix(ref s) => s.matches_all(candidate),
             Suffix(ref s) => s.matches_all(candidate),
             RequiredExtension(ref s) => s.matches_all(candidate),
-            BasenameRegex(ref s) => {
-                s.matches_all(candidate.basename_for_regex())
-            }
-            Regex(ref s) => s.matches_all(&candidate.path),
+            Regex(ref s) => s.matches_all(candidate),
         }
     }
 }
@@ -993,6 +985,7 @@ impl RequiredExtensionStrategy {
 struct RegexSetStrategy {
     matcher: Regex,
     map: Vec<usize>,
+    basename: bool,
     // We use a pool of PatternSets to hopefully allocating a fresh one on each
     // call.
     //
@@ -1008,28 +1001,41 @@ type PatternSetPoolFn =
     Box<dyn Fn() -> PatternSet + Send + Sync + UnwindSafe + RefUnwindSafe>;
 
 impl RegexSetStrategy {
-    fn is_match(&self, path: &[u8]) -> bool {
-        self.matcher.is_match(path)
+    /// Returns the part of the path matched by these regexes.
+    fn haystack<'a>(&self, candidate: &'a Candidate<'_>) -> &'a [u8] {
+        if self.basename {
+            candidate.basename_for_regex()
+        } else {
+            &candidate.path
+        }
+    }
+
+    fn is_match(&self, candidate: &Candidate<'_>) -> bool {
+        self.matcher.is_match(self.haystack(candidate))
     }
 
     fn find_matches(
         &self,
-        path: &[u8],
+        candidate: &Candidate<'_>,
     ) -> PoolGuard<'_, PatternSet, PatternSetPoolFn> {
-        let input = regex_automata::Input::new(path);
+        let input = regex_automata::Input::new(self.haystack(candidate));
         let mut patset = self.patset.get();
         patset.clear();
         self.matcher.which_overlapping_matches(&input, &mut patset);
         patset
     }
 
-    fn matches_all(&self, path: &[u8]) -> bool {
-        let patset = self.find_matches(path);
+    fn matches_all(&self, candidate: &Candidate<'_>) -> bool {
+        let patset = self.find_matches(candidate);
         patset.is_full()
     }
 
-    fn matches_into(&self, path: &[u8], matches: &mut Vec<usize>) {
-        let patset = self.find_matches(path);
+    fn matches_into(
+        &self,
+        candidate: &Candidate<'_>,
+        matches: &mut Vec<usize>,
+    ) {
+        let patset = self.find_matches(candidate);
         for i in patset.iter() {
             matches.push(self.map[i]);
         }
@@ -1081,6 +1087,7 @@ impl MultiStrategyBuilder {
         Ok(RegexSetStrategy {
             matcher,
             map: self.map,
+            basename: false,
             patset: Arc::new(Pool::new(create)),
         })
     }
