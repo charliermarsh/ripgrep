@@ -207,6 +207,11 @@ impl Gitignore {
         if self.is_empty() {
             return Match::None;
         }
+        // A directory-only rule cannot match a file, so skip stripping the
+        // root from its path when this is the only rule.
+        if !is_dir && self.globs.len() == 1 && self.globs[0].is_only_dir() {
+            return Match::None;
+        }
         self.matched_stripped(self.strip(path.as_ref()), is_dir)
     }
 
